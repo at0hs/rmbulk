@@ -276,6 +276,17 @@ Describe '登録' {
         Should -Invoke Write-Host -ParameterFilter { "$Object" -eq '行2: #42 設計' }
     }
 
+    It '同じ秒に2回ログを作っても上書きせず別のファイルにする' {
+        $root = Join-Path $TestDrive 'samesecond'
+        Mock Get-Date { [datetime]'2026-11-03 10:00:00' }
+        $first = New-RmLog -Root $root -InputPath 'a.csv'
+        $second = New-RmLog -Root $root -InputPath 'b.csv'
+        $second.Path | Should -Not -Be $first.Path
+        $first.Path | Should -Match 'rmbulk_20261103_100000\.log$'
+        $second.Path | Should -Match 'rmbulk_20261103_100000_2\.log$'
+        [IO.File]::ReadAllText($first.Path) | Should -Match 'a\.csv'
+    }
+
     It '1件ごとにログへ書き、最後に集計を書く（API キーは出ない）' {
         $root = Join-Path $TestDrive 'logtest'
         $log = New-RmLog -Root $root -InputPath 'C:\work\wbs.csv'

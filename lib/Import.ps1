@@ -252,7 +252,10 @@ function Invoke-RmRegistration {
 function New-RmLog {
     param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$InputPath)
     $dir = (Get-RmPaths -Root $Root).LogDir
-    $path = Join-Path $dir ('rmbulk_{0}.log' -f (Get-Date).ToString('yyyyMMdd_HHmmss'))
+    $stamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
+    $path = Join-Path $dir "rmbulk_$stamp.log"
+    # 同じ秒に実行されたときは前のログを上書きしないよう連番を付ける
+    for ($i = 2; Test-Path -LiteralPath $path; $i++) { $path = Join-Path $dir "rmbulk_${stamp}_$i.log" }
     Write-RmTextFile -Path $path -Text ''
     $log = @{ Path = $path }
     Write-RmLog -Log $log -Message "入力ファイル: $InputPath"
