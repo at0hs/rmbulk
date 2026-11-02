@@ -198,3 +198,103 @@ Describe 'Test-RmRows' {
         Should -Invoke Test-RmIssueExists -Times 1 -Exactly
     }
 }
+
+Describe '登録' {
+    BeforeAll {
+        function New-TestItem {
+            param([int]$RowNumber, $TempId = $null, [string]$Subject, $ParentTempId = $null, $ParentIssueId = $null)
+            [pscustomobject]@{
+                RowNumber = $RowNumber; TempId = $TempId; ProjectId = 1; TrackerId = 2; VersionId = 5
+                Subject = $Subject; Description = ''; StartDate = '2026-11-04'; DueDate = '2026-11-05'
+                ParentIssueId = $ParentIssueId; ParentTempId = $ParentTempId
+                ProjectName = 'WBS'; TrackerName = 'タスク'; VersionName = 'v1.0'; ParentText = ''
+            }
+        }
+    }
+
+    BeforeEach {
+        Mock Write-Host { }
+    }
+
+    It '子が先に書かれていても親から登録し、#n を実際の番号に置き換える' {
+        $items = @(
+            New-TestItem -RowNumber 2 -TempId 2 -Subject '子' -ParentTempId 1
+            New-TestItem -RowNumber 3 -TempId 1 -Subject '親'
+        )
+        $script:calls = @()
+        Mock New-RmIssue { $script:calls += $Fields.subject; if ($Fields.subject -eq '親') { 100 } else { 101 } }
+        $res = Invoke-RmRegistration -Items $items
+        $calls | Should -Be @('親', '子')
+        Should -Invoke New-RmIssue -Times 1 -Exactly -ParameterFilter { $Fields.subject -eq '子' -and $Fields.parent_issue_id -eq 100 }
+        Should -Invoke New-RmIssue -Times 1 -Exactly -ParameterFilter {
+            $Fields.subject -eq '親' -and $Fields.project_id -eq 1 -and $Fields.tracker_id -eq 2 -and $Fields.fixed_version_id -eq 5 -and
+            $Fields.start_date -eq '2026-11-04' -and $Fields.due_date -eq '2026-11-05' -and $null -eq $Fields.parent_issue_id
+        }
+        ($res | ForEach-Object { $_.RowNumber }) | Should -Be @(2, 3)
+        ($res | Where-Object RowNumber -eq 2).IssueId | Should -Be 101
+        ($res | Where-Object RowNumber -eq 2).Status | Should -Be 'Success'
+    }
+
+    It '親子関係のない行はファイルの順番で登録する' {
+        $items = @(
+            New-TestItem -RowNumber 2 -Subject 'A'
+            New-TestItem -RowNumber 3 -TempId 2 -Subject 'B' -ParentTempId 1
+            New-TestItem -RowNumber 4 -Subject 'C'
+            New-TestItem -RowNumber 5 -TempId 1 -Subject 'D'
+        )
+        (Get-RmRegistrationOrder -Items $items | ForEach-Object { $_.Subject }) | Should -Be @('A', 'C', 'D', 'B')
+    }
+
+    It '既存チケットの親はそのまま parent_issue_id に入れる' {
+        Mock New-RmIssue { 200 }
+        Invoke-RmRegistration -Items @(New-TestItem -RowNumber 2 -Subject 'X' -ParentIssueId 123) | Out-Null
+        Should -Invoke New-RmIssue -Times 1 -Exactly -ParameterFilter { $Fields.parent_issue_id -eq 123 }
+    }
+
+    It '1件失敗しても残りを続け、失敗した親の子孫（孫まで）はスキップする' {
+        $items = @(
+            New-TestItem -RowNumber 2 -TempId 1 -Subject '親'
+            New-TestItem -RowNumber 3 -TempId 2 -Subject '子' -ParentTempId 1
+            New-TestItem -RowNumber 4 -TempId 3 -Subject '孫' -ParentTempId 2
+            New-TestItem -RowNumber 5 -Subject '無関係'
+        )
+        Mock New-RmIssue { if ($Fields.subject -eq '親') { throw 'HTTP 422: 題名が不正' } 300 }
+        $res = Invoke-RmRegistration -Items $items
+        ($res | Where-Object RowNumber -eq 2).Status | Should -Be 'Error'
+        ($res | Where-Object RowNumber -eq 2).Message | Should -Be 'HTTP 422: 題名が不正'
+        ($res | Where-Object RowNumber -eq 3).Status | Should -Be 'Skipped'
+        ($res | Where-Object RowNumber -eq 3).Message | Should -Be '親（仮番号1）が登録されなかったため'
+        ($res | Where-Object RowNumber -eq 4).Status | Should -Be 'Skipped'
+        ($res | Where-Object RowNumber -eq 4).Message | Should -Be '親（仮番号2）が登録されなかったため'
+        ($res | Where-Object RowNumber -eq 5).Status | Should -Be 'Success'
+        Should -Invoke New-RmIssue -Times 2 -Exactly
+    }
+
+    It '成功した行は画面にチケット番号を表示する' {
+        Mock New-RmIssue { 42 }
+        Invoke-RmRegistration -Items @(New-TestItem -RowNumber 2 -Subject '設計') | Out-Null
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -eq '行2: #42 設計' }
+    }
+
+    It '1件ごとにログへ書き、最後に集計を書く（API キーは出ない）' {
+        $root = Join-Path $TestDrive 'logtest'
+        $log = New-RmLog -Root $root -InputPath 'C:\work\wbs.csv'
+        $log.Path | Should -Match '\\logs\\rmbulk_\d{8}_\d{6}\.log$'
+        $items = @(
+            New-TestItem -RowNumber 2 -TempId 1 -Subject '親'
+            New-TestItem -RowNumber 3 -TempId 2 -Subject '子' -ParentTempId 1
+            New-TestItem -RowNumber 4 -Subject '別'
+        )
+        Mock New-RmIssue { if ($Fields.subject -eq '親') { throw 'HTTP 422: だめ' } 500 }
+        Set-RmConnection -BaseUrl 'http://r' -ApiKey 'secret-api-key'
+        $res = Invoke-RmRegistration -Items $items -Log $log
+        Write-RmLogSummary -Log $log -Results $res
+        $text = [IO.File]::ReadAllText($log.Path, [Text.Encoding]::UTF8)
+        $text | Should -Match '入力ファイル: C:\\work\\wbs\.csv'
+        $text | Should -Match '\[エラー\] 行2 仮番号1 親: HTTP 422: だめ'
+        $text | Should -Match '\[スキップ\] 行3 仮番号2 子: 親（仮番号1）が登録されなかったため'
+        $text | Should -Match '\[成功\] 行4 仮番号- チケット#500 別'
+        $text | Should -Match '成功 1件 / エラー 1件 / スキップ 1件'
+        $text | Should -Not -Match 'secret-api-key'
+    }
+}

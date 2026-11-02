@@ -170,3 +170,122 @@ function Test-RmRows {
 }
 
 #endregion
+
+#region 登録
+
+# 親（ParentTempId の行）が必ず子より前に来るように並べる。その範囲でファイルの順番を保つ
+function Get-RmRegistrationOrder {
+    param([object[]]$Items = @())
+    $fileTempIds = @{}
+    foreach ($item in $Items) { if ($null -ne $item.TempId) { $fileTempIds[[int]$item.TempId] = $true } }
+
+    $placedTempIds = @{}
+    $remaining = New-Object System.Collections.ArrayList (, $Items)
+    $ordered = @()
+    while ($remaining.Count -gt 0) {
+        $next = $null
+        foreach ($item in $remaining) {
+            $parent = $item.ParentTempId
+            if ($null -eq $parent -or -not $fileTempIds.ContainsKey([int]$parent) -or $placedTempIds.ContainsKey([int]$parent)) {
+                $next = $item
+                break
+            }
+        }
+        # チェックで循環は除いているが、念のため並べられない行が残ったら残りをそのまま並べる
+        if ($null -eq $next) { $ordered += @($remaining); break }
+        $ordered += $next
+        if ($null -ne $next.TempId) { $placedTempIds[[int]$next.TempId] = $true }
+        $remaining.Remove($next)
+    }
+    $ordered
+}
+
+function Invoke-RmRegistration {
+    param([object[]]$Items = @(), $Log)
+    $issueIdByTempId = @{}   # 登録に成功した仮番号 -> チケット番号
+    $results = @()
+    foreach ($item in (Get-RmRegistrationOrder -Items $Items)) {
+        $result = [pscustomobject]@{
+            RowNumber = $item.RowNumber; TempId = $item.TempId; Subject = $item.Subject
+            Status = $null; IssueId = $null; Message = ''
+        }
+        $parentIssueId = $item.ParentIssueId
+        if ($null -ne $item.ParentTempId) {
+            if ($issueIdByTempId.ContainsKey([int]$item.ParentTempId)) {
+                $parentIssueId = $issueIdByTempId[[int]$item.ParentTempId]
+            } else {
+                $result.Status = 'Skipped'
+                $result.Message = "親（仮番号$($item.ParentTempId)）が登録されなかったため"
+            }
+        }
+        if (-not $result.Status) {
+            try {
+                $result.IssueId = New-RmIssue -Fields @{
+                    project_id       = $item.ProjectId
+                    tracker_id       = $item.TrackerId
+                    subject          = $item.Subject
+                    description      = $item.Description
+                    start_date       = $item.StartDate
+                    due_date         = $item.DueDate
+                    fixed_version_id = $item.VersionId
+                    parent_issue_id  = $parentIssueId
+                }
+                $result.Status = 'Success'
+                if ($null -ne $item.TempId) { $issueIdByTempId[[int]$item.TempId] = $result.IssueId }
+                Write-Host "行$($item.RowNumber): #$($result.IssueId) $($item.Subject)"
+            } catch {
+                $result.Status = 'Error'
+                $result.Message = $_.Exception.Message
+                Write-Host "行$($item.RowNumber): エラー $($result.Message)" -ForegroundColor Red
+            }
+        }
+        if ($Log) { Write-RmLogResult -Log $Log -Result $result }
+        $results += $result
+    }
+    @($results | Sort-Object { $_.RowNumber })
+}
+
+#endregion
+
+#region ログ
+
+function New-RmLog {
+    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$InputPath)
+    $dir = (Get-RmPaths -Root $Root).LogDir
+    $path = Join-Path $dir ('rmbulk_{0}.log' -f (Get-Date).ToString('yyyyMMdd_HHmmss'))
+    Write-RmTextFile -Path $path -Text ''
+    $log = @{ Path = $path }
+    Write-RmLog -Log $log -Message "入力ファイル: $InputPath"
+    $log
+}
+
+function Write-RmLog {
+    param([Parameter(Mandatory)]$Log, [Parameter(Mandatory)][string]$Message)
+    $line = '{0} {1}{2}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $Message, [Environment]::NewLine
+    [IO.File]::AppendAllText($Log.Path, $line, (New-Object Text.UTF8Encoding $false))
+}
+
+function Write-RmLogResult {
+    param([Parameter(Mandatory)]$Log, [Parameter(Mandatory)]$Result)
+    $tempId = if ($null -ne $Result.TempId) { $Result.TempId } else { '-' }
+    $head = "行$($Result.RowNumber) 仮番号$tempId"
+    $message = switch ($Result.Status) {
+        'Success' { "[成功] $head チケット#$($Result.IssueId) $($Result.Subject)" }
+        'Error' { "[エラー] $head $($Result.Subject): $($Result.Message)" }
+        'Skipped' { "[スキップ] $head $($Result.Subject): $($Result.Message)" }
+    }
+    Write-RmLog -Log $Log -Message $message
+}
+
+function Get-RmSummaryText {
+    param([object[]]$Results = @())
+    $count = { param($status) @($Results | Where-Object { $_.Status -eq $status }).Count }
+    '成功 {0}件 / エラー {1}件 / スキップ {2}件' -f (& $count 'Success'), (& $count 'Error'), (& $count 'Skipped')
+}
+
+function Write-RmLogSummary {
+    param([Parameter(Mandatory)]$Log, [object[]]$Results = @())
+    Write-RmLog -Log $Log -Message (Get-RmSummaryText -Results $Results)
+}
+
+#endregion
