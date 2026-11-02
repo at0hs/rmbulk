@@ -1,0 +1,8 @@
+# 結合テスト用の Redmine（データベースはイメージ既定の SQLite）
+services:
+  redmine:
+    image: redmine:6
+    ports:
+      - "3030:3000"
+    volumes:
+      - ./seed:/rmbulk-seed:ro

@@ -77,4 +77,13 @@ pwsh -NoProfile -File tests/Run-Tests.ps1                         # 単体テス
 pwsh -NoProfile -File tests/Run-Tests.ps1 -Path tests/integration # 結合テスト（Docker が必要）
 ```
 
+結合テストは `redmine:6` イメージを `http://127.0.0.1:3030` で起動し、テスト用のプロジェクトとバージョンを作ってから実行します（初回はイメージの取得とデータベースの初期化に数分かかります）。`localhost` は IPv6 で接続しようとして応答しないことがあるため、`127.0.0.1` を使っています。
+Excel を使うテストは、Excel がインストールされていない PC では自動でスキップされます。
+
+結合テストの後片付け:
+
+```powershell
+docker compose -f tests/integration/docker-compose.yml down -v
+```
+
 `.ps1` ファイルは UTF-8 BOM 付きで保存してください（BOM がないと PowerShell 5.1 が日本語を読めません。テストで検査しています）。
