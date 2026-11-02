@@ -1,0 +1,6 @@
+# rmbulk が実行時に作るファイル
+config.json
+apikey.dat
+metadata.json
+logs/
+rmbulk_template.csv
