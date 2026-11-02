@@ -289,3 +289,31 @@ function Write-RmLogSummary {
 }
 
 #endregion
+
+#region 表示
+
+function Show-RmPreview {
+    param([object[]]$Rows = @(), $Check)
+    $Rows | ForEach-Object {
+        [pscustomobject][ordered]@{
+            '行番号'         = $_.RowNumber
+            '仮番号'         = $_.TempId
+            'プロジェクト'   = $_.Project
+            'トラッカー'     = $_.Tracker
+            '題名'           = $_.Subject
+            '開始日'         = $_.StartDate
+            '期日'           = $_.DueDate
+            '対象バージョン' = $_.Version
+            '親チケット'     = $_.Parent
+        }
+    } | Format-Table -AutoSize | Out-Host
+    foreach ($err in @($Check.Errors)) {
+        Write-Host "行$($err.RowNumber): $($err.Message)" -ForegroundColor Red
+    }
+}
+
+function Read-RmConfirmation {
+    (Read-Host '登録しますか？(y/n)') -eq 'y'
+}
+
+#endregion

@@ -48,7 +48,12 @@ function Read-RmApiKey {
     } catch {
         throw $message
     }
-    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    ConvertFrom-RmSecureString $secure
+}
+
+function ConvertFrom-RmSecureString {
+    param([Parameter(Mandatory)][securestring]$SecureString)
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString)
     try {
         [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
     } finally {
