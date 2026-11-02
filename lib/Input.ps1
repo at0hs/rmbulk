@@ -94,3 +94,69 @@ function ConvertTo-RmInputRows {
     }
     @{ Rows = $rows; Warnings = $warnings }
 }
+
+function Convert-RmExcelCell {
+    param($Value, [string]$Column)
+    if ($null -eq $Value) { return '' }
+    if ($Value -is [double]) {
+        if ($Column -in '開始日', '期日') { return [DateTime]::FromOADate($Value).ToString('yyyy-MM-dd') }
+        if ($Value -eq [Math]::Truncate($Value)) { return ([long]$Value).ToString() }
+        return $Value.ToString([Globalization.CultureInfo]::InvariantCulture)
+    }
+    [string]$Value
+}
+
+# UsedRange.Value2（下限 1 の 2 次元配列、セルが1つならスカラー）を列名と行に分ける
+function ConvertFrom-RmExcelValues {
+    param($Values)
+    if ($null -eq $Values) { return @{ Headers = @(); Records = @() } }
+    if ($Values -isnot [Array]) {
+        $one = [Array]::CreateInstance([object], [int[]]@(1, 1), [int[]]@(1, 1))
+        $one.SetValue($Values, 1, 1)
+        $Values = $one
+    }
+    $r0 = $Values.GetLowerBound(0); $r1 = $Values.GetUpperBound(0)
+    $c0 = $Values.GetLowerBound(1); $c1 = $Values.GetUpperBound(1)
+
+    $headers = @()
+    for ($c = $c0; $c -le $c1; $c++) { $headers += (Convert-RmExcelCell -Value $Values[$r0, $c] -Column '').Trim() }
+    $records = @()
+    for ($r = $r0 + 1; $r -le $r1; $r++) {
+        $record = @{}
+        for ($c = $c0; $c -le $c1; $c++) {
+            $header = $headers[$c - $c0]
+            $record[$header] = Convert-RmExcelCell -Value $Values[$r, $c] -Column $header
+        }
+        $records += $record
+    }
+    @{ Headers = $headers; Records = $records }
+}
+
+function Read-RmExcelTable {
+    param([Parameter(Mandatory)][string]$Path)
+    $excel = $null; $books = $null; $book = $null; $sheets = $null; $sheet = $null; $range = $null
+    try {
+        try {
+            $excel = New-Object -ComObject Excel.Application
+        } catch {
+            throw "Excel を起動できません。Excel がインストールされているか確認してください: $($_.Exception.Message)"
+        }
+        $excel.Visible = $false
+        $excel.DisplayAlerts = $false
+        $books = $excel.Workbooks
+        $book = $books.Open($Path, 0, $true)
+        $sheets = $book.Worksheets
+        $sheet = $sheets.Item(1)
+        $range = $sheet.UsedRange
+        $values = $range.Value2
+    } finally {
+        if ($book) { $book.Close($false) }
+        if ($excel) { $excel.Quit() }
+        foreach ($obj in $range, $sheet, $sheets, $book, $books, $excel) {
+            if ($obj) { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($obj) }
+        }
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
+    }
+    ConvertFrom-RmExcelValues -Values $values
+}
