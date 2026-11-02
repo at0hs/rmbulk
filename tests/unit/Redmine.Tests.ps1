@@ -92,3 +92,66 @@ Describe 'Redmine API' {
         $err.Message | Should -Not -BeNullOrEmpty
     }
 }
+
+Describe 'メタデータ' {
+    BeforeEach {
+        $root = Join-Path $TestDrive ([guid]::NewGuid())
+        New-Item -ItemType Directory $root | Out-Null
+    }
+
+    It 'ファイルがなければ空のメタデータを返す' {
+        $m = Read-RmMetadata -Root $root
+        @($m.projects).Count | Should -Be 0
+        $m.projectDetails.Count | Should -Be 0
+    }
+
+    It 'Update-RmProjectList はプロジェクト一覧を保存し、詳細を破棄する' {
+        Mock Get-RmProjects { @([pscustomobject]@{ id = 1; name = 'WBS'; identifier = 'wbs'; status = 1 }, [pscustomobject]@{ id = 2; name = 'B'; identifier = 'b'; status = 5 }) }
+        $m = Read-RmMetadata -Root $root
+        $m.projectDetails['1'] = @{ fetchedAt = 'x'; trackers = @(); versions = @() }
+        Save-RmMetadata -Root $root -Metadata $m
+        $r = Update-RmProjectList -Root $root
+        @($r.projects).Count | Should -Be 2
+        $r.projects[0].name | Should -Be 'WBS'
+        $r.projectDetails.Count | Should -Be 0
+        $saved = Read-RmMetadata -Root $root
+        @($saved.projects).Count | Should -Be 2
+        $saved.projects[0].identifier | Should -Be 'wbs'
+        $saved.projectDetails.Count | Should -Be 0
+        $saved.fetchedAt | Should -Not -BeNullOrEmpty
+    }
+
+    It 'Get-RmProjectDetail は初回だけ API を呼び、保存する' {
+        Mock Get-RmProjectTrackers { @([pscustomobject]@{ id = 2; name = 'タスク' }, [pscustomobject]@{ id = 3; name = '機能' }) }
+        Mock Get-RmProjectVersions { @([pscustomobject]@{ id = 5; name = 'v1.0'; status = 'open' }) }
+        $m = Read-RmMetadata -Root $root
+        $d = Get-RmProjectDetail -Root $root -Metadata $m -ProjectId 1
+        @($d.trackers).Count | Should -Be 2
+        $d.trackers[0].name | Should -Be 'タスク'
+        Get-RmProjectDetail -Root $root -Metadata $m -ProjectId 1 | Out-Null
+        Should -Invoke Get-RmProjectTrackers -Times 1 -Exactly
+        $saved = Read-RmMetadata -Root $root
+        $saved.projectDetails['1'].versions[0].name | Should -Be 'v1.0'
+        @($saved.projectDetails['1'].trackers).Count | Should -Be 2
+    }
+
+    It '保存済みの詳細は読み直しても使われ、API を呼ばない' {
+        Mock Get-RmProjectTrackers { @([pscustomobject]@{ id = 2; name = 'タスク' }) }
+        Mock Get-RmProjectVersions { @() }
+        Get-RmProjectDetail -Root $root -Metadata (Read-RmMetadata -Root $root) -ProjectId 1 | Out-Null
+        $detail = Get-RmProjectDetail -Root $root -Metadata (Read-RmMetadata -Root $root) -ProjectId 1
+        Should -Invoke Get-RmProjectTrackers -Times 1 -Exactly
+        @($detail.versions).Count | Should -Be 0
+        @($detail.trackers).Count | Should -Be 1
+    }
+
+    It 'Clear-RmProjectDetail は指定したプロジェクトの詳細だけを消す' {
+        $m = Read-RmMetadata -Root $root
+        $m.projectDetails['1'] = @{ fetchedAt = 'x'; trackers = @(); versions = @() }
+        $m.projectDetails['2'] = @{ fetchedAt = 'x'; trackers = @(); versions = @() }
+        Clear-RmProjectDetail -Root $root -Metadata $m -ProjectId 1
+        $saved = Read-RmMetadata -Root $root
+        $saved.projectDetails.ContainsKey('1') | Should -BeFalse
+        $saved.projectDetails.ContainsKey('2') | Should -BeTrue
+    }
+}

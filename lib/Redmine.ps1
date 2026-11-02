@@ -130,19 +130,19 @@ function Get-RmProjects {
         }
         $offset += 100
     } while ($items.Count -gt 0 -and $offset -lt [int]$page.total_count)
-    , $all
+    $all
 }
 
 function Get-RmProjectTrackers {
     param([Parameter(Mandatory)][int]$ProjectId)
     $project = (Invoke-RmApi -Method Get -Path "/projects/$ProjectId.json?include=trackers").project
-    , @(@($project.trackers) | ForEach-Object { [pscustomobject]@{ id = [int]$_.id; name = [string]$_.name } })
+    @(@($project.trackers) | ForEach-Object { [pscustomobject]@{ id = [int]$_.id; name = [string]$_.name } })
 }
 
 function Get-RmProjectVersions {
     param([Parameter(Mandatory)][int]$ProjectId)
     $versions = (Invoke-RmApi -Method Get -Path "/projects/$ProjectId/versions.json").versions
-    , @(@($versions) | ForEach-Object { [pscustomobject]@{ id = [int]$_.id; name = [string]$_.name; status = [string]$_.status } })
+    @(@($versions) | ForEach-Object { [pscustomobject]@{ id = [int]$_.id; name = [string]$_.name; status = [string]$_.status } })
 }
 
 function Test-RmIssueExists {
@@ -158,6 +158,69 @@ function New-RmIssue {
         if ($null -ne $value -and "$value" -ne '') { $issue[$key] = $value }
     }
     [int](Invoke-RmApi -Method Post -Path '/issues.json' -Body @{ issue = $issue }).issue.id
+}
+
+#endregion
+
+#region Metadata
+
+function Read-RmMetadata {
+    param([Parameter(Mandatory)][string]$Root)
+    $metadata = @{ fetchedAt = $null; projects = @(); projectDetails = @{} }
+    $path = (Get-RmPaths -Root $Root).Metadata
+    if (-not (Test-Path $path)) { return $metadata }
+
+    $data = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8) | ConvertFrom-Json
+    $metadata.fetchedAt = $data.fetchedAt
+    $metadata.projects = @($data.projects | Where-Object { $null -ne $_ })
+    # ConvertFrom-Json は PSCustomObject を返すので、プロジェクト ID をキーとする hashtable に直す
+    if ($data.projectDetails) {
+        foreach ($prop in $data.projectDetails.PSObject.Properties) {
+            $metadata.projectDetails[$prop.Name] = @{
+                fetchedAt = $prop.Value.fetchedAt
+                trackers  = @($prop.Value.trackers | Where-Object { $null -ne $_ })
+                versions  = @($prop.Value.versions | Where-Object { $null -ne $_ })
+            }
+        }
+    }
+    $metadata
+}
+
+function Save-RmMetadata {
+    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][hashtable]$Metadata)
+    $json = $Metadata | ConvertTo-Json -Depth 6
+    Write-RmTextFile -Path (Get-RmPaths -Root $Root).Metadata -Text $json
+}
+
+function Update-RmProjectList {
+    param([Parameter(Mandatory)][string]$Root)
+    $metadata = @{
+        fetchedAt      = (Get-Date).ToString('s')
+        projects       = @(Get-RmProjects)
+        projectDetails = @{}
+    }
+    Save-RmMetadata -Root $Root -Metadata $metadata
+    $metadata
+}
+
+function Get-RmProjectDetail {
+    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][hashtable]$Metadata, [Parameter(Mandatory)][int]$ProjectId)
+    $key = [string]$ProjectId
+    if (-not $Metadata.projectDetails.ContainsKey($key)) {
+        $Metadata.projectDetails[$key] = @{
+            fetchedAt = (Get-Date).ToString('s')
+            trackers  = @(Get-RmProjectTrackers -ProjectId $ProjectId)
+            versions  = @(Get-RmProjectVersions -ProjectId $ProjectId)
+        }
+        Save-RmMetadata -Root $Root -Metadata $Metadata
+    }
+    $Metadata.projectDetails[$key]
+}
+
+function Clear-RmProjectDetail {
+    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][hashtable]$Metadata, [Parameter(Mandatory)][int[]]$ProjectId)
+    foreach ($id in $ProjectId) { $Metadata.projectDetails.Remove([string]$id) }
+    Save-RmMetadata -Root $Root -Metadata $Metadata
 }
 
 #endregion
