@@ -4,3 +4,7 @@ apikey.dat
 metadata.json
 logs/
 rmbulk_template.csv
+
+# 開発支援ツールの作業ファイル（コミットしない）
+.superpowers/
+docs/superpowers/
