@@ -98,6 +98,8 @@ function Invoke-RmImport {
     param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Path)
     try {
         Connect-RmSaved -Root $Root
+        # メタデータが保存済みだとチェックで通信しないことがあるため、最初に接続と認証を確かめる
+        Get-RmCurrentUser | Out-Null
         $fullPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
         $inputData = Read-RmInputFile -Path $fullPath
         foreach ($warning in $inputData.Warnings) { Write-Host $warning -ForegroundColor Yellow }

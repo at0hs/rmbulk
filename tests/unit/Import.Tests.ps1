@@ -178,6 +178,20 @@ Describe 'Test-RmRows' {
         Get-Messages $r 2 | Should -Contain "親チケットの書き方が正しくありません（例: 123 または #1）: $P"
     }
 
+    It '全角数字や大きすぎる数字でも例外にならず、行のエラーとして返す' {
+        $r = Test-RmRows -Root $TestDrive -Metadata $m -Rows @(
+            New-Row -RowNumber 2 -Values @{ TempId = '１' }
+            New-Row -RowNumber 3 -Values @{ Parent = '#１' }
+            New-Row -RowNumber 4 -Values @{ Parent = '１２３' }
+            New-Row -RowNumber 5 -Values @{ Parent = '99999999999' }
+            New-Row -RowNumber 6 -Values @{ TempId = '99999999999' })
+        Get-Messages $r 2 | Should -Contain '仮番号は正の整数で指定してください: １'
+        Get-Messages $r 3 | Should -Contain '親チケットの書き方が正しくありません（例: 123 または #1）: #１'
+        Get-Messages $r 4 | Should -Contain '親チケットの書き方が正しくありません（例: 123 または #1）: １２３'
+        Get-Messages $r 5 | Should -Contain '親チケットの書き方が正しくありません（例: 123 または #1）: 99999999999'
+        Get-Messages $r 6 | Should -Contain '仮番号は正の整数で指定してください: 99999999999'
+    }
+
     It '1行に複数のエラーがあればすべて返す' {
         $r = Test-RmRows -Root $TestDrive -Metadata $m -Rows @(New-Row -Values @{ Subject = ''; StartDate = '2026-11-05'; DueDate = '2026-11-04' })
         @(Get-Messages $r 2).Count | Should -Be 2
@@ -267,6 +281,23 @@ Describe '登録' {
         ($res | Where-Object RowNumber -eq 4).Status | Should -Be 'Skipped'
         ($res | Where-Object RowNumber -eq 4).Message | Should -Be '親（仮番号2）が登録されなかったため'
         ($res | Where-Object RowNumber -eq 5).Status | Should -Be 'Success'
+        Should -Invoke New-RmIssue -Times 2 -Exactly
+    }
+
+    It '認証エラーや接続エラーが起きたら残りの登録を打ち切ってスキップにする' -ForEach @(
+        @{ Fatal = '認証に失敗しました（HTTP 401）。API キーが無効です。rmbulk setup を実行し直してください。' },
+        @{ Fatal = 'Redmine に接続できません: timeout' }) {
+        $items = @(
+            New-TestItem -RowNumber 2 -Subject 'A'
+            New-TestItem -RowNumber 3 -Subject 'B'
+            New-TestItem -RowNumber 4 -Subject 'C'
+        )
+        Mock New-RmIssue { if ($Fields.subject -eq 'A') { 1 } else { throw $Fatal } }
+        $res = Invoke-RmRegistration -Items $items
+        ($res | Where-Object RowNumber -eq 2).Status | Should -Be 'Success'
+        ($res | Where-Object RowNumber -eq 3).Status | Should -Be 'Error'
+        ($res | Where-Object RowNumber -eq 4).Status | Should -Be 'Skipped'
+        ($res | Where-Object RowNumber -eq 4).Message | Should -Be '認証または接続のエラーで登録を中止したため'
         Should -Invoke New-RmIssue -Times 2 -Exactly
     }
 

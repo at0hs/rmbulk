@@ -12,6 +12,14 @@ function ConvertTo-RmDate {
     $null
 }
 
+# 半角数字だけの正の整数（int に収まるもの）なら [int]、それ以外は $null
+function ConvertTo-RmPositiveInt {
+    param([string]$Text)
+    $value = 0
+    if ($Text -cmatch '^[0-9]+$' -and [int]::TryParse($Text, [ref]$value) -and $value -gt 0) { return $value }
+    $null
+}
+
 function Resolve-RmProject {
     param([hashtable]$Metadata, [string]$Text)
     $byIdentifier = @($Metadata.projects | Where-Object { $_.identifier -ceq $Text })
@@ -41,11 +49,11 @@ function Test-RmRows {
     $tempIdOwner = @{}   # [int] 仮番号 -> RowNumber
     foreach ($row in $Rows) {
         if ($row.TempId -eq '') { continue }
-        if ($row.TempId -notmatch '^\d+$' -or [long]$row.TempId -le 0 -or [long]$row.TempId -gt [int]::MaxValue) {
+        $id = ConvertTo-RmPositiveInt $row.TempId
+        if ($null -eq $id) {
             & $addError $row.RowNumber 'Invalid' "仮番号は正の整数で指定してください: $($row.TempId)"
             continue
         }
-        $id = [int]$row.TempId
         if ($tempIdOwner.ContainsKey($id)) {
             & $addError $row.RowNumber 'Invalid' "仮番号が重複しています: $($row.TempId)"
             continue
@@ -57,8 +65,9 @@ function Test-RmRows {
     # 親の仮番号（RowNumber -> [int]）。循環の検出にも使う
     $parentTempIds = @{}
     foreach ($row in $Rows) {
-        if ($row.Parent -match '^#(\d+)$' -and $tempIdOwner.ContainsKey([int]$Matches[1])) {
-            $parentTempIds[$row.RowNumber] = [int]$Matches[1]
+        if ($row.Parent.StartsWith('#', [StringComparison]::Ordinal)) {
+            $parentNumber = ConvertTo-RmPositiveInt $row.Parent.Substring(1)
+            if ($null -ne $parentNumber -and $tempIdOwner.ContainsKey($parentNumber)) { $parentTempIds[$row.RowNumber] = $parentNumber }
         }
     }
     $parentOfTempId = @{}
@@ -120,7 +129,8 @@ function Test-RmRows {
 
         # 親チケット
         $parentTempId = $null; $parentIssueId = $null
-        if ($row.Parent -match '^#(\d+)$') {
+        $existingParent = ConvertTo-RmPositiveInt $row.Parent
+        if ($row.Parent.StartsWith('#', [StringComparison]::Ordinal) -and $null -ne (ConvertTo-RmPositiveInt $row.Parent.Substring(1))) {
             if ($parentTempIds.ContainsKey($n)) {
                 $parentTempId = $parentTempIds[$n]
                 # 自分の仮番号から親をたどって自分に戻れば循環
@@ -137,8 +147,8 @@ function Test-RmRows {
             } else {
                 & $addError $n 'Invalid' "親チケットの仮番号が見つかりません: $($row.Parent)"
             }
-        } elseif ($row.Parent -match '^\d+$') {
-            $parentIssueId = [int]$row.Parent
+        } elseif ($null -ne $existingParent) {
+            $parentIssueId = $existingParent
             if (-not $issueExists.ContainsKey($parentIssueId)) { $issueExists[$parentIssueId] = Test-RmIssueExists -IssueId $parentIssueId }
             if (-not $issueExists[$parentIssueId]) { & $addError $n 'Invalid' "親チケットが存在しません: $($row.Parent)" }
         } elseif ($row.Parent -ne '') {
@@ -204,13 +214,17 @@ function Invoke-RmRegistration {
     param([object[]]$Items = @(), $Log)
     $issueIdByTempId = @{}   # 登録に成功した仮番号 -> チケット番号
     $results = @()
+    $aborted = $false        # 認証・接続のエラーが起きたら、残りは試さずにスキップする
     foreach ($item in (Get-RmRegistrationOrder -Items $Items)) {
         $result = [pscustomobject]@{
             RowNumber = $item.RowNumber; TempId = $item.TempId; Subject = $item.Subject
             Status = $null; IssueId = $null; Message = ''
         }
         $parentIssueId = $item.ParentIssueId
-        if ($null -ne $item.ParentTempId) {
+        if ($aborted) {
+            $result.Status = 'Skipped'
+            $result.Message = '認証または接続のエラーで登録を中止したため'
+        } elseif ($null -ne $item.ParentTempId) {
             if ($issueIdByTempId.ContainsKey([int]$item.ParentTempId)) {
                 $parentIssueId = $issueIdByTempId[[int]$item.ParentTempId]
             } else {
@@ -237,6 +251,7 @@ function Invoke-RmRegistration {
                 $result.Status = 'Error'
                 $result.Message = $_.Exception.Message
                 Write-Host "行$($item.RowNumber): エラー $($result.Message)" -ForegroundColor Red
+                if ($result.Message -like '認証に失敗しました*' -or $result.Message -like 'Redmine に接続できません*') { $aborted = $true }
             }
         }
         if ($Log) { Write-RmLogResult -Log $Log -Result $result }

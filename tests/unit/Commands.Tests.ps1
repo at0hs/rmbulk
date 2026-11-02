@@ -99,7 +99,24 @@ Describe 'import' {
         Mock Test-RmIssueExists { $true }
         Mock New-RmIssue { 100 + [int]($Fields.subject -replace '\D', '') }
         Mock Read-RmConfirmation { $true }
+        Mock Get-RmCurrentUser { [pscustomobject]@{ id = 1; login = 'taro' } }
         $script:root = New-TestRoot
+    }
+
+    It 'メタデータが保存済みでも、最初に接続と認証を確かめ、失敗したら確認を聞かずに終わる' {
+        Mock Get-RmCurrentUser { throw '認証に失敗しました（HTTP 401）。API キーが無効です。rmbulk setup を実行し直してください。' }
+        $metadata = Read-RmMetadata -Root $root
+        $metadata.projectDetails['1'] = @{
+            fetchedAt = 'x'
+            trackers  = @([pscustomobject]@{ id = 2; name = 'タスク' })
+            versions  = @([pscustomobject]@{ id = 5; name = 'v1.0'; status = 'open' })
+        }
+        Save-RmMetadata -Root $root -Metadata $metadata
+        $csv = New-TestCsv -Root $root -DataLines @('1,WBS,タスク,親1,2026-11-04,2026-11-05,v1.0,')
+        Invoke-RmImport -Root $root -Path $csv | Should -BeFalse
+        Should -Invoke Read-RmConfirmation -Times 0
+        Should -Invoke New-RmIssue -Times 0
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -like '*rmbulk setup を実行し直してください*' }
     }
 
     It 'y なら親から順に登録し、ログを残す' {

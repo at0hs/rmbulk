@@ -97,6 +97,7 @@ function Invoke-RmApi {
         Uri         = $script:RmConnection.BaseUrl + $Path
         Method      = $Method
         Headers     = @{ 'X-Redmine-API-Key' = $script:RmConnection.ApiKey }
+        TimeoutSec  = 30
         ErrorAction = 'Stop'
     }
     if ($Body) {
@@ -120,8 +121,13 @@ function Invoke-RmApi {
     }
 }
 
+$script:RmNotApiMessage = 'Redmine の API 応答ではありません。URL を確認してください。'
+
 function Get-RmCurrentUser {
-    (Invoke-RmApi -Method Get -Path '/users/current.json').user
+    $user = (Invoke-RmApi -Method Get -Path '/users/current.json').user
+    # URL の誤りや SSO のログイン画面では HTML が 200 で返ることがある
+    if (-not $user -or -not $user.id) { throw $script:RmNotApiMessage }
+    $user
 }
 
 function Get-RmProjects {
@@ -162,7 +168,9 @@ function New-RmIssue {
         $value = $Fields[$key]
         if ($null -ne $value -and "$value" -ne '') { $issue[$key] = $value }
     }
-    [int](Invoke-RmApi -Method Post -Path '/issues.json' -Body @{ issue = $issue }).issue.id
+    $id = (Invoke-RmApi -Method Post -Path '/issues.json' -Body @{ issue = $issue }).issue.id
+    if (-not $id -or [int]$id -le 0) { throw $script:RmNotApiMessage }
+    [int]$id
 }
 
 #endregion

@@ -37,6 +37,22 @@ Describe 'Redmine API' {
         }
     }
 
+    It 'タイムアウトを 30 秒にする' {
+        Mock Invoke-RestMethod { [pscustomobject]@{ user = [pscustomobject]@{ id = 1; login = 'a' } } }
+        Get-RmCurrentUser | Out-Null
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $TimeoutSec -eq 30 }
+    }
+
+    It 'Redmine 以外の応答（HTML のログイン画面など）は接続確認で失敗にする' {
+        Mock Invoke-RestMethod { '<html>login</html>' }
+        { Get-RmCurrentUser } | Should -Throw 'Redmine の API 応答ではありません。URL を確認してください。'
+    }
+
+    It 'チケット番号が返らない応答は登録の失敗にする' {
+        Mock Invoke-RestMethod { '<html>login</html>' }
+        { New-RmIssue -Fields @{ project_id = 1; subject = 'x' } } | Should -Throw 'Redmine の API 応答ではありません。URL を確認してください。'
+    }
+
     It 'プロジェクト一覧をページングして全件取得する' {
         Mock Invoke-RestMethod { [pscustomobject]@{ total_count = 150; projects = @(1..100 | ForEach-Object { [pscustomobject]@{ id = $_; name = "p$_"; identifier = "p$_"; status = 1 } }) } } -ParameterFilter { $Uri -match 'offset=0' }
         Mock Invoke-RestMethod { [pscustomobject]@{ total_count = 150; projects = @(101..150 | ForEach-Object { [pscustomobject]@{ id = $_; name = "p$_"; identifier = "p$_"; status = 1 } }) } } -ParameterFilter { $Uri -match 'offset=100' }

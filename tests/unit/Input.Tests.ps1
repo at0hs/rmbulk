@@ -44,6 +44,30 @@ Describe 'CSV の読み込み' {
         $r.Rows[1].RowNumber | Should -Be 3
     }
 
+    It '説明の中の空行と空白だけの行を保つ' {
+        $path = Write-TestCsv -Path (Join-Path $TestDrive 'paragraph.csv') -Lines @(
+            "$header,説明",
+            '1,WBS,タスク,設計,2026-11-04,2026-11-05,v1.0,"段落1',
+            '',
+            '段落2',
+            '   ',
+            '終わり"',
+            '',
+            '2,WBS,タスク,実装,2026-11-06,2026-11-07,v1.0,')
+        $r = Read-RmInputFile -Path $path
+        @($r.Rows).Count | Should -Be 2
+        $r.Rows[0].Description | Should -Be "段落1`r`n`r`n段落2`r`n   `r`n終わり"
+        $r.Rows[1].Subject | Should -Be '実装'
+    }
+
+    It '引用符で囲んだ空のセルと、末尾の改行がないファイルを読める' {
+        $path = Join-Path $TestDrive 'noeol.csv'
+        [IO.File]::WriteAllText($path, "$header,説明`n1,WBS,タスク,`"設計`",2026-11-04,2026-11-05,v1.0,`"`"", (New-Object Text.UTF8Encoding $false))
+        $r = Read-RmInputFile -Path $path
+        $r.Rows[0].Subject | Should -Be '設計'
+        $r.Rows[0].Description | Should -Be ''
+    }
+
     It '全列が空の行は無視し、前後の空白を除く' {
         $path = Write-TestCsv -Path (Join-Path $TestDrive 'blank.csv') -Lines @(
             $header, ',,,,,,', ' 1 , WBS ,タスク, 設計 ,2026-11-04,2026-11-05,v1.0')

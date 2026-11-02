@@ -1,7 +1,5 @@
 ﻿# CSV / Excel の読み込みと行オブジェクトへの変換
 
-Add-Type -AssemblyName Microsoft.VisualBasic
-
 $script:RmColumns = [ordered]@{
     '仮番号'         = 'TempId'
     'プロジェクト'   = 'Project'
@@ -41,28 +39,63 @@ function Get-RmCsvText {
     }
 }
 
+# RFC 4180 の CSV を解析し、レコード（string[]）のリストを返す。
+# 引用符の中の改行（空行を含む）と "" のエスケープを扱う。
+function ConvertFrom-RmCsvText {
+    param([AllowEmptyString()][string]$Text)
+    $quote = [char]'"'; $comma = [char]','; $cr = [char]"`r"; $lf = [char]"`n"
+    $records = New-Object System.Collections.Generic.List[object]
+    $fields = New-Object System.Collections.Generic.List[string]
+    $field = New-Object Text.StringBuilder
+    $inQuotes = $false
+    $hasContent = $false
+    $i = 0
+    while ($i -lt $Text.Length) {
+        $ch = $Text[$i]
+        if ($inQuotes) {
+            if ($ch -eq $quote) {
+                if ($i + 1 -lt $Text.Length -and $Text[$i + 1] -eq $quote) { [void]$field.Append($quote); $i += 2; continue }
+                $inQuotes = $false
+            } else {
+                [void]$field.Append($ch)
+            }
+            $i++
+            continue
+        }
+        if ($ch -eq $cr -or $ch -eq $lf) {
+            if ($ch -eq $cr -and $i + 1 -lt $Text.Length -and $Text[$i + 1] -eq $lf) { $i++ }
+            $fields.Add($field.ToString()); [void]$field.Clear()
+            $records.Add($fields.ToArray()); $fields.Clear()
+            $hasContent = $false
+            $i++
+            continue
+        }
+        $hasContent = $true
+        if ($ch -eq $quote) { $inQuotes = $true }
+        elseif ($ch -eq $comma) { $fields.Add($field.ToString()); [void]$field.Clear() }
+        else { [void]$field.Append($ch) }
+        $i++
+    }
+    if ($hasContent -or $inQuotes) {
+        $fields.Add($field.ToString())
+        $records.Add($fields.ToArray())
+    }
+    , $records
+}
+
 function Read-RmCsvTable {
     param([Parameter(Mandatory)][string]$Path)
-    $parser = New-Object Microsoft.VisualBasic.FileIO.TextFieldParser (New-Object IO.StringReader (Get-RmCsvText -Path $Path))
-    try {
-        $parser.TextFieldType = [Microsoft.VisualBasic.FileIO.FieldType]::Delimited
-        $parser.SetDelimiters(',')
-        $parser.HasFieldsEnclosedInQuotes = $true
-        $parser.TrimWhiteSpace = $false
-
-        $headers = @()
-        if (-not $parser.EndOfData) { $headers = @($parser.ReadFields()) }
-        $records = @()
-        while (-not $parser.EndOfData) {
-            $fields = $parser.ReadFields()
-            $record = @{}
-            for ($i = 0; $i -lt $headers.Count; $i++) {
-                $record[$headers[$i]] = if ($i -lt $fields.Count) { [string]$fields[$i] } else { '' }
-            }
-            $records += $record
+    $lines = ConvertFrom-RmCsvText -Text (Get-RmCsvText -Path $Path)
+    $headers = @()
+    if ($lines.Count -gt 0) { $headers = @($lines[0]) }
+    $records = @()
+    for ($n = 1; $n -lt $lines.Count; $n++) {
+        $fields = $lines[$n]
+        $record = @{}
+        for ($i = 0; $i -lt $headers.Count; $i++) {
+            $record[$headers[$i]] = if ($i -lt $fields.Count) { [string]$fields[$i] } else { '' }
         }
-    } finally {
-        $parser.Close()
+        $records += $record
     }
     @{ Headers = $headers; Records = $records }
 }
