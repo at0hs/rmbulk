@@ -17,7 +17,7 @@
     function New-TestCsv {
         param([string]$Root, [string[]]$DataLines)
         $path = Join-Path $Root 'input.csv'
-        $text = (@('仮番号,プロジェクト,トラッカー,題名,開始日,期日,対象バージョン,親チケット') + $DataLines) -join "`r`n"
+        $text = (@('仮ID,プロジェクト,トラッカー,題名,開始日,期日,対象バージョン,親チケット') + $DataLines) -join "`r`n"
         [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding $true))
         $path
     }
@@ -78,7 +78,7 @@ Describe 'template' {
         Invoke-RmTemplate -OutputPath $out | Should -BeTrue
         $bytes = [IO.File]::ReadAllBytes($out)
         $bytes[0..2] | Should -Be @(0xEF, 0xBB, 0xBF)
-        (Get-Content $out -Encoding UTF8) | Should -Be '仮番号,プロジェクト,トラッカー,題名,説明,開始日,期日,対象バージョン,親チケット'
+        (Get-Content $out -Encoding UTF8) | Should -Be '仮ID,プロジェクト,トラッカー,題名,説明,開始日,期日,対象バージョン,親チケット'
     }
 
     It '既にファイルがあれば上書きしない' {
@@ -131,13 +131,16 @@ Describe 'import' {
         Should -Invoke Write-Host -ParameterFilter { "$Object" -eq '成功 2件 / エラー 0件 / スキップ 0件' }
     }
 
-    It 'エラーがあれば確認を聞かずに終わり、登録しない' {
-        $csv = New-TestCsv -Root $root -DataLines @('1,WBS,タスク,,2026-11-04,2026-11-05,v1.0,')
+    It 'エラーがあれば確認を聞かずに終わり、登録しない（件数はエラーのある行の数）' {
+        $csv = New-TestCsv -Root $root -DataLines @(
+            '1,WBS,タスク,,2026-11-04,2026-11-05,v1.0,',
+            '2,WBS,タスク,正しい,2026-11-04,2026-11-05,v1.0,',
+            '3,WBS,タスク,日付なし,,,v1.0,')
         Invoke-RmImport -Root $root -Path $csv | Should -BeFalse
         Should -Invoke Read-RmConfirmation -Times 0
         Should -Invoke New-RmIssue -Times 0
-        Should -Invoke Write-Host -ParameterFilter { "$Object" -eq '行2: 題名が空です' }
-        Should -Invoke Write-Host -ParameterFilter { "$Object" -eq 'エラーがあるため登録しません。' }
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -eq '    └ 題名が空です' }
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -eq 'エラーが 2 件あるため登録しません。' }
     }
 
     It 'n なら登録しない' {
@@ -181,10 +184,11 @@ Describe 'import' {
         Should -Invoke Write-Host -ParameterFilter { "$Object" -like '*rmbulk setup を実行し直してください*' }
     }
 
-    It '登録に失敗した行があれば $false' {
+    It '登録に失敗した行があれば、その行を表示して $false' {
         Mock New-RmIssue { throw 'HTTP 422: だめ' }
         $csv = New-TestCsv -Root $root -DataLines @('1,WBS,タスク,親1,2026-11-04,2026-11-05,v1.0,')
         Invoke-RmImport -Root $root -Path $csv | Should -BeFalse
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -eq 'エラー 親1: HTTP 422: だめ' -and $ForegroundColor -eq 'Red' }
     }
 
     It '設定がなければ setup を促す' {

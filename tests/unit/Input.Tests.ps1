@@ -14,7 +14,7 @@
         $Path
     }
 
-    $script:header = '仮番号,プロジェクト,トラッカー,題名,開始日,期日,対象バージョン'
+    $script:header = '仮ID,プロジェクト,トラッカー,題名,開始日,期日,対象バージョン'
 }
 
 Describe 'CSV の読み込み' {
@@ -104,7 +104,7 @@ Describe 'CSV の読み込み' {
 
     It '必須列がなければ throw' {
         $path = Write-TestCsv -Path (Join-Path $TestDrive 'missing.csv') -Lines @(
-            '仮番号,プロジェクト,トラッカー,題名,開始日,期日', '1,WBS,タスク,設計,2026-11-04,2026-11-05')
+            '仮ID,プロジェクト,トラッカー,題名,開始日,期日', '1,WBS,タスク,設計,2026-11-04,2026-11-05')
         { Read-RmInputFile -Path $path } | Should -Throw '必須の列がありません: 対象バージョン'
     }
 
@@ -164,7 +164,7 @@ Describe 'Excel の読み込み' -Skip:$noExcel {
             $Path
         }
 
-        $headerRow = @('仮番号', 'プロジェクト', 'トラッカー', '題名', '開始日', '期日', '対象バージョン', '親チケット')
+        $headerRow = @('仮ID', 'プロジェクト', 'トラッカー', '題名', '開始日', '期日', '対象バージョン', '親チケット')
         $script:xlsx = New-TestXlsx -Path (Join-Path $TestDrive 'wbs.xlsx') -Sheets @(
             , @(
                 $headerRow,
@@ -202,7 +202,7 @@ Describe 'Excel の読み込み' -Skip:$noExcel {
         $r.Rows[1].StartDate | Should -Be '2026/11/05'
     }
 
-    It '数値セルの仮番号・親チケットは整数の文字列になる' {
+    It '数値セルの仮ID・親チケットは整数の文字列になる' {
         $r.Rows[0].TempId | Should -Be '1'
         $r.Rows[1].Parent | Should -Be '123'
         $r.Rows[0].Parent | Should -Be ''
@@ -242,7 +242,7 @@ Describe 'Excel の値の変換（Excel 不要）' {
         }
         $oa = ([datetime]'2026-11-04').ToOADate()
         $values = New-Value2 @(
-            @('仮番号', 'プロジェクト', 'トラッカー', '題名', '開始日', '期日', '対象バージョン', '親チケット'),
+            @('仮ID', 'プロジェクト', 'トラッカー', '題名', '開始日', '期日', '対象バージョン', '親チケット'),
             @([double]1, 'WBS', 'タスク', '設計', $oa, ($oa + 1), 'v1.0', $null),
             @([double]2, 'WBS', 'タスク', '実装', '2026/11/05', '2026/11/06', [double]1.5, [double]123),
             @($null, $null, $null, $null, $null, $null, $null, $null),

@@ -1,7 +1,7 @@
 ﻿# CSV / Excel の読み込みと行オブジェクトへの変換
 
 $script:RmColumns = [ordered]@{
-    '仮番号'         = 'TempId'
+    '仮ID'           = 'TempId'
     'プロジェクト'   = 'Project'
     'トラッカー'     = 'Tracker'
     '題名'           = 'Subject'

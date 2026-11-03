@@ -17,7 +17,7 @@ Describe '本物の Redmine への登録' -Skip:$noDocker {
         $script:root = Join-Path $TestDrive 'tool'
         New-Item -ItemType Directory $root | Out-Null
         $script:runId = [guid]::NewGuid().ToString('N').Substring(0, 6)
-        $script:header = '仮番号,プロジェクト,トラッカー,題名,説明,開始日,期日,対象バージョン,親チケット'
+        $script:header = '仮ID,プロジェクト,トラッカー,題名,説明,開始日,期日,対象バージョン,親チケット'
 
         Mock Read-Host { 'http://127.0.0.1:3030' } -ParameterFilter { -not $AsSecureString }
         Mock Read-Host { ConvertTo-SecureString $apiKey -AsPlainText -Force } -ParameterFilter { $AsSecureString }
@@ -30,12 +30,12 @@ Describe '本物の Redmine への登録' -Skip:$noDocker {
             $path
         }
 
-        # ログの [成功] 行から 仮番号 -> チケット番号 を取り出す
+        # ログの [成功] 行から 仮ID -> チケット番号 を取り出す
         function Get-IssueIdsFromLog {
             $log = Get-ChildItem (Get-RmPaths -Root $root).LogDir | Sort-Object LastWriteTime | Select-Object -Last 1
             $ids = @{}
             foreach ($line in [IO.File]::ReadAllLines($log.FullName, [Text.Encoding]::UTF8)) {
-                if ($line -match '\[成功\] 行\d+ 仮番号(\S+) チケット#(\d+)') { $ids[$Matches[1]] = [int]$Matches[2] }
+                if ($line -match '\[成功\] 行\d+ 仮ID(\S+) チケット#(\d+)') { $ids[$Matches[1]] = [int]$Matches[2] }
             }
             $ids
         }
@@ -100,7 +100,7 @@ Describe '本物の Redmine への登録' -Skip:$noDocker {
             $book = $excel.Workbooks.Add()
             $sheet = $book.Worksheets.Item(1)
             $values = @(
-                @('仮番号', 'プロジェクト', 'トラッカー', '題名', '開始日', '期日', '対象バージョン', '親チケット'),
+                @('仮ID', 'プロジェクト', 'トラッカー', '題名', '開始日', '期日', '対象バージョン', '親チケット'),
                 @(1, 'rmbulk-test', '機能', "Excel親-$runId", ([datetime]'2026-11-04').ToOADate(), ([datetime]'2026-11-05').ToOADate(), 'v1.0', ''),
                 @(2, 'rmbulk-test', '機能', "Excel子-$runId", ([datetime]'2026-11-04').ToOADate(), ([datetime]'2026-11-05').ToOADate(), 'v1.0', '#1'))
             for ($r = 0; $r -lt $values.Count; $r++) {

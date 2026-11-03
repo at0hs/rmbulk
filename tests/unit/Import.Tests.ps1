@@ -137,22 +137,22 @@ Describe 'Test-RmRows' {
         Get-Messages $r 2 | Should -Contain '期日が開始日より前です'
     }
 
-    It '仮番号が正の整数でない（<T>）' -ForEach @(@{ T = 'a' }, @{ T = '0' }, @{ T = '1.5' }) {
+    It '仮IDが正の整数でない（<T>）' -ForEach @(@{ T = 'a' }, @{ T = '0' }, @{ T = '1.5' }) {
         $r = Test-RmRows -Root $TestDrive -Metadata $m -Rows @(New-Row -Values @{ TempId = $T })
-        Get-Messages $r 2 | Should -Contain "仮番号は正の整数で指定してください: $T"
+        Get-Messages $r 2 | Should -Contain "仮IDは正の整数で指定してください: $T"
     }
 
-    It '仮番号の重複は2つ目以降の行にエラー' {
+    It '仮IDの重複は2つ目以降の行にエラー' {
         $r = Test-RmRows -Root $TestDrive -Metadata $m -Rows @(
             New-Row -RowNumber 2 -Values @{ TempId = '1' }
             New-Row -RowNumber 3 -Values @{ TempId = '1' })
         @(Get-Messages $r 2).Count | Should -Be 0
-        Get-Messages $r 3 | Should -Contain '仮番号が重複しています: 1'
+        Get-Messages $r 3 | Should -Contain '仮IDが重複しています: 1'
     }
 
-    It '親の仮番号が見つからない' {
+    It '親の仮IDが見つからない' {
         $r = Test-RmRows -Root $TestDrive -Metadata $m -Rows @(New-Row -Values @{ Parent = '#9' })
-        Get-Messages $r 2 | Should -Contain '親チケットの仮番号が見つかりません: #9'
+        Get-Messages $r 2 | Should -Contain '親チケットの仮IDが見つかりません: #9'
     }
 
     It '親子関係の循環は循環に含まれる全行にエラー' {
@@ -185,11 +185,11 @@ Describe 'Test-RmRows' {
             New-Row -RowNumber 4 -Values @{ Parent = '１２３' }
             New-Row -RowNumber 5 -Values @{ Parent = '99999999999' }
             New-Row -RowNumber 6 -Values @{ TempId = '99999999999' })
-        Get-Messages $r 2 | Should -Contain '仮番号は正の整数で指定してください: １'
+        Get-Messages $r 2 | Should -Contain '仮IDは正の整数で指定してください: １'
         Get-Messages $r 3 | Should -Contain '親チケットの書き方が正しくありません（例: 123 または #1）: #１'
         Get-Messages $r 4 | Should -Contain '親チケットの書き方が正しくありません（例: 123 または #1）: １２３'
         Get-Messages $r 5 | Should -Contain '親チケットの書き方が正しくありません（例: 123 または #1）: 99999999999'
-        Get-Messages $r 6 | Should -Contain '仮番号は正の整数で指定してください: 99999999999'
+        Get-Messages $r 6 | Should -Contain '仮IDは正の整数で指定してください: 99999999999'
     }
 
     It '1行に複数のエラーがあればすべて返す' {
@@ -210,6 +210,94 @@ Describe 'Test-RmRows' {
             New-Row -RowNumber 2 -Values @{ Parent = '123' }
             New-Row -RowNumber 3 -Values @{ Parent = '123' }) | Out-Null
         Should -Invoke Test-RmIssueExists -Times 1 -Exactly
+    }
+}
+
+Describe '表示幅' {
+    It '<Text> の表示幅は <Expected>（全角は2、半角は1）' -ForEach @(
+        @{ Text = ''; Expected = 0 }
+        @{ Text = 'abc'; Expected = 3 }
+        @{ Text = '設計'; Expected = 4 }
+        @{ Text = '【確認01】'; Expected = 10 }
+        @{ Text = 'ｱｲｳ'; Expected = 3 }
+    ) {
+        Get-RmDisplayWidth $Text | Should -Be $Expected
+    }
+
+    It '幅に収まる文字列はそのまま' {
+        Limit-RmDisplayWidth -Text '設計' -Width 4 | Should -Be '設計'
+    }
+
+    It '幅を超える文字列は ... を付けて幅に収める' {
+        Limit-RmDisplayWidth -Text '【確認01】詳細設計' -Width 10 | Should -Be '【確認0...'
+        Limit-RmDisplayWidth -Text '設計設計設計' -Width 8 | Should -Be '設計...'
+    }
+}
+
+Describe '一覧' {
+    BeforeAll {
+        function Get-Texts { param($Lines) @($Lines | ForEach-Object { $_.Text }) }
+        # $Line の中で $Value が始まる位置（表示幅）
+        function Get-Column { param([string]$Line, [string]$Value) Get-RmDisplayWidth $Line.Substring(0, $Line.IndexOf($Value)) }
+    }
+
+    It '行番号は出さず、仮IDから順に列を並べる' {
+        $lines = Get-RmPreviewLines -Rows @(New-Row -Values @{ TempId = '1' }) -Check @{ Errors = @() } -Width 200
+        $header = (Get-Texts $lines)[0]
+        $header | Should -Not -Match '行番号'
+        $header | Should -Match '^仮ID +プロジェクト +トラッカー +題名 +開始日 +期日 +対象バージョン +親チケット$'
+    }
+
+    It '全角を含んでも列の開始位置がそろう' {
+        $rows = @(
+            New-Row -RowNumber 2 -Values @{ TempId = '1'; Project = 'WBS'; Subject = '設計' }
+            New-Row -RowNumber 3 -Values @{ TempId = '10'; Project = '社内プロジェクト'; Subject = 'Design' }
+        )
+        $texts = Get-Texts (Get-RmPreviewLines -Rows $rows -Check @{ Errors = @() } -Width 200)
+        $col = Get-Column $texts[0] '題名'
+        Get-Column $texts[2] '設計' | Should -Be $col
+        Get-Column $texts[3] 'Design' | Should -Be $col
+    }
+
+    It 'エラーのある行と、そのすぐ下の理由（複数可）をエラーとして返す' {
+        $rows = @(
+            New-Row -RowNumber 2 -Values @{ Subject = '正しい' }
+            New-Row -RowNumber 3 -Values @{ Subject = 'だめ' }
+            New-Row -RowNumber 4 -Values @{ Subject = 'これも正しい' }
+        )
+        $check = @{ Errors = @(
+                [pscustomobject]@{ RowNumber = 3; Kind = 'Invalid'; Message = '開始日が空です' }
+                [pscustomobject]@{ RowNumber = 3; Kind = 'Invalid'; Message = '期日が空です' }
+            ) }
+        $lines = @(Get-RmPreviewLines -Rows $rows -Check $check -Width 200)
+        $lines.Count | Should -Be 7
+        $lines[2].Text | Should -Match '正しい'
+        $lines[2].IsError | Should -BeFalse
+        $lines[3].Text | Should -Match 'だめ'
+        $lines[3].IsError | Should -BeTrue
+        $lines[4].Text | Should -Be '    └ 開始日が空です'
+        $lines[4].IsError | Should -BeTrue
+        $lines[5].Text | Should -Be '    └ 期日が空です'
+        $lines[5].IsError | Should -BeTrue
+        $lines[6].Text | Should -Match 'これも正しい'
+        $lines[6].IsError | Should -BeFalse
+    }
+
+    It '画面の幅を超えるときは題名を切り詰め、右側の列を残す' {
+        $rows = @(New-Row -Values @{ Subject = '【確認01】詳細設計（とても長い題名の例：画面の幅を超えたときにどう表示されるか）'; Parent = '#1' })
+        $texts = Get-Texts (Get-RmPreviewLines -Rows $rows -Check @{ Errors = @() } -Width 100)
+        foreach ($t in $texts) { Get-RmDisplayWidth $t.TrimEnd() | Should -BeLessOrEqual 99 }
+        $texts[0] | Should -Match '親チケット$'
+        $texts[2] | Should -Match '\.\.\. .*#1$'
+    }
+
+    It 'エラーのある行は赤で表示する' {
+        Mock Write-Host { }
+        Mock Get-RmConsoleWidth { 200 }
+        $check = @{ Errors = @([pscustomobject]@{ RowNumber = 2; Kind = 'Invalid'; Message = '題名が空です' }) }
+        Show-RmPreview -Rows @(New-Row -RowNumber 2 -Values @{ Subject = '' }) -Check $check
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -eq '    └ 題名が空です' -and $ForegroundColor -eq 'Red' }
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -match '^仮ID' -and -not $ForegroundColor }
     }
 }
 
@@ -277,9 +365,9 @@ Describe '登録' {
         ($res | Where-Object RowNumber -eq 2).Status | Should -Be 'Error'
         ($res | Where-Object RowNumber -eq 2).Message | Should -Be 'HTTP 422: 題名が不正'
         ($res | Where-Object RowNumber -eq 3).Status | Should -Be 'Skipped'
-        ($res | Where-Object RowNumber -eq 3).Message | Should -Be '親（仮番号1）が登録されなかったため'
+        ($res | Where-Object RowNumber -eq 3).Message | Should -Be '親（仮ID1）が登録されなかったため'
         ($res | Where-Object RowNumber -eq 4).Status | Should -Be 'Skipped'
-        ($res | Where-Object RowNumber -eq 4).Message | Should -Be '親（仮番号2）が登録されなかったため'
+        ($res | Where-Object RowNumber -eq 4).Message | Should -Be '親（仮ID2）が登録されなかったため'
         ($res | Where-Object RowNumber -eq 5).Status | Should -Be 'Success'
         Should -Invoke New-RmIssue -Times 2 -Exactly
     }
@@ -301,10 +389,53 @@ Describe '登録' {
         Should -Invoke New-RmIssue -Times 2 -Exactly
     }
 
-    It '成功した行は画面にチケット番号を表示する' {
+    It '登録中は1件ごとに進捗を表示して最後に消し、成功した行は画面に出さない' {
         Mock New-RmIssue { 42 }
-        Invoke-RmRegistration -Items @(New-TestItem -RowNumber 2 -Subject '設計') | Out-Null
-        Should -Invoke Write-Host -ParameterFilter { "$Object" -eq '行2: #42 設計' }
+        Mock Show-RmProgress { }
+        Mock Clear-RmProgress { }
+        $items = @(
+            New-TestItem -RowNumber 2 -Subject 'A'
+            New-TestItem -RowNumber 3 -Subject 'B'
+        )
+        Invoke-RmRegistration -Items $items | Out-Null
+        Should -Invoke Show-RmProgress -Times 1 -Exactly -ParameterFilter { $Done -eq 0 -and $Total -eq 2 -and $Subject -eq 'A' }
+        Should -Invoke Show-RmProgress -Times 1 -Exactly -ParameterFilter { $Done -eq 1 -and $Total -eq 2 -and $Subject -eq 'B' }
+        Should -Invoke Clear-RmProgress -Times 1 -Exactly
+        Should -Invoke Write-Host -Times 0
+    }
+
+    It '進捗の行は件数とバーと題名' {
+        Format-RmProgressLine -Done 5 -Total 10 -Subject '設計' -Width 120 | Should -Be '登録中 [##########..........]  5/10  設計'
+        Format-RmProgressLine -Done 0 -Total 3 -Subject 'A' -Width 120 | Should -Be '登録中 [....................]  0/3  A'
+    }
+
+    It '進捗の行は画面の幅に収める（折り返すと上書きが崩れるため）' {
+        $text = Format-RmProgressLine -Done 1 -Total 10 -Subject '【確認01】詳細設計（とても長い題名の例）' -Width 50
+        Get-RmDisplayWidth $text | Should -BeLessOrEqual 49
+        $text | Should -Match '\.\.\.$'
+    }
+
+    It '進捗は同じ行に上書きし、出力がリダイレクトされているときは出さない' {
+        Mock Get-RmConsoleWidth { 60 }
+        Mock Test-RmInteractiveOutput { $true }
+        Show-RmProgress -Done 1 -Total 2 -Subject 'A'
+        Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { "$Object".StartsWith("`r登録中 [") -and $NoNewline }
+        Mock Test-RmInteractiveOutput { $false }
+        Show-RmProgress -Done 1 -Total 2 -Subject 'A'
+        Clear-RmProgress
+        Should -Invoke Write-Host -Times 1 -Exactly
+    }
+
+    It '失敗とスキップだけを赤で表示する' {
+        $results = @(
+            [pscustomobject]@{ RowNumber = 2; TempId = 1; Subject = '親'; Status = 'Error'; IssueId = $null; Message = 'HTTP 422: だめ' }
+            [pscustomobject]@{ RowNumber = 3; TempId = 2; Subject = '子'; Status = 'Skipped'; IssueId = $null; Message = '親（仮ID1）が登録されなかったため' }
+            [pscustomobject]@{ RowNumber = 4; TempId = $null; Subject = '別'; Status = 'Success'; IssueId = 500; Message = '' }
+        )
+        Show-RmFailures -Results $results
+        Should -Invoke Write-Host -Times 2 -Exactly
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -eq 'エラー 親: HTTP 422: だめ' -and $ForegroundColor -eq 'Red' }
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -eq 'スキップ 子: 親（仮ID1）が登録されなかったため' -and $ForegroundColor -eq 'Red' }
     }
 
     It '同じ秒に2回ログを作っても上書きせず別のファイルにする' {
@@ -333,9 +464,9 @@ Describe '登録' {
         Write-RmLogSummary -Log $log -Results $res
         $text = [IO.File]::ReadAllText($log.Path, [Text.Encoding]::UTF8)
         $text | Should -Match '入力ファイル: C:\\work\\wbs\.csv'
-        $text | Should -Match '\[エラー\] 行2 仮番号1 親: HTTP 422: だめ'
-        $text | Should -Match '\[スキップ\] 行3 仮番号2 子: 親（仮番号1）が登録されなかったため'
-        $text | Should -Match '\[成功\] 行4 仮番号- チケット#500 別'
+        $text | Should -Match '\[エラー\] 行2 仮ID1 親: HTTP 422: だめ'
+        $text | Should -Match '\[スキップ\] 行3 仮ID2 子: 親（仮ID1）が登録されなかったため'
+        $text | Should -Match '\[成功\] 行4 仮ID- チケット#500 別'
         $text | Should -Match '成功 1件 / エラー 1件 / スキップ 1件'
         $text | Should -Not -Match 'secret-api-key'
     }

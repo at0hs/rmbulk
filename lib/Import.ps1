@@ -44,25 +44,25 @@ function Test-RmRows {
         $rowErrors[$RowNumber] = $true
     }
 
-    # 仮番号の解析（重複は2つ目以降の行をエラーにする）
-    $tempIds = @{}       # RowNumber -> [int] 仮番号
-    $tempIdOwner = @{}   # [int] 仮番号 -> RowNumber
+    # 仮IDの解析（重複は2つ目以降の行をエラーにする）
+    $tempIds = @{}       # RowNumber -> [int] 仮ID
+    $tempIdOwner = @{}   # [int] 仮ID -> RowNumber
     foreach ($row in $Rows) {
         if ($row.TempId -eq '') { continue }
         $id = ConvertTo-RmPositiveInt $row.TempId
         if ($null -eq $id) {
-            & $addError $row.RowNumber 'Invalid' "仮番号は正の整数で指定してください: $($row.TempId)"
+            & $addError $row.RowNumber 'Invalid' "仮IDは正の整数で指定してください: $($row.TempId)"
             continue
         }
         if ($tempIdOwner.ContainsKey($id)) {
-            & $addError $row.RowNumber 'Invalid' "仮番号が重複しています: $($row.TempId)"
+            & $addError $row.RowNumber 'Invalid' "仮IDが重複しています: $($row.TempId)"
             continue
         }
         $tempIdOwner[$id] = $row.RowNumber
         $tempIds[$row.RowNumber] = $id
     }
 
-    # 親の仮番号（RowNumber -> [int]）。循環の検出にも使う
+    # 親の仮ID（RowNumber -> [int]）。循環の検出にも使う
     $parentTempIds = @{}
     foreach ($row in $Rows) {
         if ($row.Parent.StartsWith('#', [StringComparison]::Ordinal)) {
@@ -133,7 +133,7 @@ function Test-RmRows {
         if ($row.Parent.StartsWith('#', [StringComparison]::Ordinal) -and $null -ne (ConvertTo-RmPositiveInt $row.Parent.Substring(1))) {
             if ($parentTempIds.ContainsKey($n)) {
                 $parentTempId = $parentTempIds[$n]
-                # 自分の仮番号から親をたどって自分に戻れば循環
+                # 自分の仮IDから親をたどって自分に戻れば循環
                 if ($tempIds.ContainsKey($n)) {
                     $self = $tempIds[$n]
                     $current = $parentTempId
@@ -145,7 +145,7 @@ function Test-RmRows {
                     }
                 }
             } else {
-                & $addError $n 'Invalid' "親チケットの仮番号が見つかりません: $($row.Parent)"
+                & $addError $n 'Invalid' "親チケットの仮IDが見つかりません: $($row.Parent)"
             }
         } elseif ($null -ne $existingParent) {
             $parentIssueId = $existingParent
@@ -212,10 +212,13 @@ function Get-RmRegistrationOrder {
 
 function Invoke-RmRegistration {
     param([object[]]$Items = @(), $Log)
-    $issueIdByTempId = @{}   # 登録に成功した仮番号 -> チケット番号
+    $issueIdByTempId = @{}   # 登録に成功した仮ID -> チケット番号
     $results = @()
     $aborted = $false        # 認証・接続のエラーが起きたら、残りは試さずにスキップする
-    foreach ($item in (Get-RmRegistrationOrder -Items $Items)) {
+    $ordered = @(Get-RmRegistrationOrder -Items $Items)
+    for ($i = 0; $i -lt $ordered.Count; $i++) {
+        $item = $ordered[$i]
+        Show-RmProgress -Done $i -Total $ordered.Count -Subject $item.Subject
         $result = [pscustomobject]@{
             RowNumber = $item.RowNumber; TempId = $item.TempId; Subject = $item.Subject
             Status = $null; IssueId = $null; Message = ''
@@ -229,7 +232,7 @@ function Invoke-RmRegistration {
                 $parentIssueId = $issueIdByTempId[[int]$item.ParentTempId]
             } else {
                 $result.Status = 'Skipped'
-                $result.Message = "親（仮番号$($item.ParentTempId)）が登録されなかったため"
+                $result.Message = "親（仮ID$($item.ParentTempId)）が登録されなかったため"
             }
         }
         if (-not $result.Status) {
@@ -246,17 +249,16 @@ function Invoke-RmRegistration {
                 }
                 $result.Status = 'Success'
                 if ($null -ne $item.TempId) { $issueIdByTempId[[int]$item.TempId] = $result.IssueId }
-                Write-Host "行$($item.RowNumber): #$($result.IssueId) $($item.Subject)"
             } catch {
                 $result.Status = 'Error'
                 $result.Message = $_.Exception.Message
-                Write-Host "行$($item.RowNumber): エラー $($result.Message)" -ForegroundColor Red
                 if ($result.Message -like '認証に失敗しました*' -or $result.Message -like 'Redmine に接続できません*') { $aborted = $true }
             }
         }
         if ($Log) { Write-RmLogResult -Log $Log -Result $result }
         $results += $result
     }
+    Clear-RmProgress
     @($results | Sort-Object { $_.RowNumber })
 }
 
@@ -286,7 +288,7 @@ function Write-RmLog {
 function Write-RmLogResult {
     param([Parameter(Mandatory)]$Log, [Parameter(Mandatory)]$Result)
     $tempId = if ($null -ne $Result.TempId) { $Result.TempId } else { '-' }
-    $head = "行$($Result.RowNumber) 仮番号$tempId"
+    $head = "行$($Result.RowNumber) 仮ID$tempId"
     $message = switch ($Result.Status) {
         'Success' { "[成功] $head チケット#$($Result.IssueId) $($Result.Subject)" }
         'Error' { "[エラー] $head $($Result.Subject): $($Result.Message)" }
@@ -310,23 +312,138 @@ function Write-RmLogSummary {
 
 #region 表示
 
+# 全角は 2 桁、半角（半角カナを含む）は 1 桁として数える
+function Get-RmDisplayWidth {
+    param([AllowEmptyString()][string]$Text)
+    $width = 0
+    foreach ($ch in $Text.ToCharArray()) {
+        $code = [int]$ch
+        if ($code -lt 0x1100 -or ($code -ge 0xFF61 -and $code -le 0xFF9F)) { $width += 1 } else { $width += 2 }
+    }
+    $width
+}
+
+# 表示幅が $Width を超えるときは末尾を ... にして収める（… は全角になる環境があるため使わない）
+function Limit-RmDisplayWidth {
+    param([AllowEmptyString()][string]$Text, [int]$Width)
+    if ((Get-RmDisplayWidth $Text) -le $Width) { return $Text }
+    $budget = [Math]::Max(0, $Width - 3)
+    $sb = New-Object Text.StringBuilder
+    $used = 0
+    foreach ($ch in $Text.ToCharArray()) {
+        $w = Get-RmDisplayWidth ([string]$ch)
+        if ($used + $w -gt $budget) { break }
+        [void]$sb.Append($ch)
+        $used += $w
+    }
+    $sb.ToString() + '...'
+}
+
+function Get-RmConsoleWidth {
+    $width = 0
+    try { $width = [Console]::WindowWidth } catch { }
+    if ($width -le 0) { $width = 120 }
+    $width
+}
+
+$script:RmPreviewColumns = [ordered]@{
+    '仮ID'           = 'TempId'
+    'プロジェクト'   = 'Project'
+    'トラッカー'     = 'Tracker'
+    '題名'           = 'Subject'
+    '開始日'         = 'StartDate'
+    '期日'           = 'DueDate'
+    '対象バージョン' = 'Version'
+    '親チケット'     = 'Parent'
+}
+
+# 一覧の行（Text と IsError）を返す。エラーのある行のすぐ下に理由の行を入れる。
+# $Width を超える場合は題名の列を縮めて、右側の列が切れないようにする
+function Get-RmPreviewLines {
+    param([object[]]$Rows = @(), $Check, [int]$Width)
+    $gap = '  '
+    $names = @($script:RmPreviewColumns.Keys)
+    $subjectIndex = [array]::IndexOf($names, '題名')
+
+    $widths = @($names | ForEach-Object { Get-RmDisplayWidth $_ })
+    foreach ($row in $Rows) {
+        for ($c = 0; $c -lt $names.Count; $c++) {
+            $w = Get-RmDisplayWidth ([string]$row.($script:RmPreviewColumns[$names[$c]]))
+            if ($w -gt $widths[$c]) { $widths[$c] = $w }
+        }
+    }
+    $total = ($widths | Measure-Object -Sum).Sum + $gap.Length * ($names.Count - 1)
+    $over = $total - ($Width - 1)
+    if ($over -gt 0) { $widths[$subjectIndex] = [Math]::Max((Get-RmDisplayWidth '題名'), $widths[$subjectIndex] - $over) }
+
+    $format = {
+        param([string[]]$Values)
+        $cells = for ($c = 0; $c -lt $Values.Count; $c++) {
+            $text = Limit-RmDisplayWidth -Text $Values[$c] -Width $widths[$c]
+            $text + (' ' * ($widths[$c] - (Get-RmDisplayWidth $text)))
+        }
+        ($cells -join $gap).TrimEnd()
+    }
+    $line = { param([string]$Text, [bool]$IsError) [pscustomobject]@{ Text = $Text; IsError = $IsError } }
+
+    $messages = @{}
+    foreach ($err in @($Check.Errors)) {
+        if (-not $messages.ContainsKey($err.RowNumber)) { $messages[$err.RowNumber] = @() }
+        $messages[$err.RowNumber] += $err.Message
+    }
+
+    & $line (& $format $names) $false
+    & $line (& $format @($widths | ForEach-Object { '-' * $_ })) $false
+    foreach ($row in $Rows) {
+        $values = @($names | ForEach-Object { [string]$row.($script:RmPreviewColumns[$_]) })
+        $isError = $messages.ContainsKey($row.RowNumber)
+        & $line (& $format $values) $isError
+        if ($isError) { foreach ($message in $messages[$row.RowNumber]) { & $line "    └ $message" $true } }
+    }
+}
+
 function Show-RmPreview {
     param([object[]]$Rows = @(), $Check)
-    $Rows | ForEach-Object {
-        [pscustomobject][ordered]@{
-            '行番号'         = $_.RowNumber
-            '仮番号'         = $_.TempId
-            'プロジェクト'   = $_.Project
-            'トラッカー'     = $_.Tracker
-            '題名'           = $_.Subject
-            '開始日'         = $_.StartDate
-            '期日'           = $_.DueDate
-            '対象バージョン' = $_.Version
-            '親チケット'     = $_.Parent
-        }
-    } | Format-Table -AutoSize | Out-Host
-    foreach ($err in @($Check.Errors)) {
-        Write-Host "行$($err.RowNumber): $($err.Message)" -ForegroundColor Red
+    Write-Host ''
+    foreach ($line in Get-RmPreviewLines -Rows $Rows -Check $Check -Width (Get-RmConsoleWidth)) {
+        if ($line.IsError) { Write-Host $line.Text -ForegroundColor Red } else { Write-Host $line.Text }
+    }
+    Write-Host ''
+}
+
+function Test-RmInteractiveOutput {
+    -not [Console]::IsOutputRedirected
+}
+
+# 進捗の行（例: 登録中 [##########..........]  5/10  題名）。$Width - 1 に収める
+function Format-RmProgressLine {
+    param([int]$Done, [int]$Total, [AllowEmptyString()][string]$Subject, [int]$Width)
+    $barWidth = 20
+    $filled = if ($Total -gt 0) { [int][Math]::Floor($barWidth * $Done / $Total) } else { 0 }
+    $head = '登録中 [' + ('#' * $filled) + ('.' * ($barWidth - $filled)) + ']  ' + "$Done/$Total" + '  '
+    $head + (Limit-RmDisplayWidth -Text $Subject -Width ($Width - 1 - (Get-RmDisplayWidth $head)))
+}
+
+# 進捗を同じ行に上書きする。Write-Progress は 5.1 で画面上部に大きな帯が出るため使わない
+function Show-RmProgress {
+    param([int]$Done, [int]$Total, [AllowEmptyString()][string]$Subject)
+    if (-not (Test-RmInteractiveOutput)) { return }
+    $width = Get-RmConsoleWidth
+    $text = Format-RmProgressLine -Done $Done -Total $Total -Subject $Subject -Width $width
+    Write-Host ("`r" + $text + (' ' * [Math]::Max(0, $width - 1 - (Get-RmDisplayWidth $text)))) -NoNewline
+}
+
+function Clear-RmProgress {
+    if (-not (Test-RmInteractiveOutput)) { return }
+    Write-Host ("`r" + (' ' * ((Get-RmConsoleWidth) - 1)) + "`r") -NoNewline
+}
+
+# 登録が終わったあと、エラーとスキップの行だけを表示する
+function Show-RmFailures {
+    param([object[]]$Results = @())
+    foreach ($result in $Results) {
+        $label = switch ($result.Status) { 'Error' { 'エラー' } 'Skipped' { 'スキップ' } default { $null } }
+        if ($label) { Write-Host "$label $($result.Subject): $($result.Message)" -ForegroundColor Red }
     }
 }
 

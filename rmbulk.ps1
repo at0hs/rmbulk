@@ -122,8 +122,9 @@ function Invoke-RmImport {
     }
 
     Show-RmPreview -Rows $rows -Check $check
-    if (@($check.Errors).Count -gt 0) {
-        Write-RmError 'エラーがあるため登録しません。'
+    $errorRowCount = @($check.Errors | ForEach-Object { $_.RowNumber } | Sort-Object -Unique).Count
+    if ($errorRowCount -gt 0) {
+        Write-RmError "エラーが $errorRowCount 件あるため登録しません。"
         return $false
     }
     if (-not (Read-RmConfirmation)) {
@@ -134,6 +135,7 @@ function Invoke-RmImport {
     $log = New-RmLog -Root $Root -InputPath $fullPath
     $results = Invoke-RmRegistration -Items $check.Items -Log $log
     Write-RmLogSummary -Log $log -Results $results
+    Show-RmFailures -Results $results
     Write-Host (Get-RmSummaryText -Results $results)
     Write-Host "ログ: $($log.Path)"
     @($results | Where-Object { $_.Status -ne 'Success' }).Count -eq 0
