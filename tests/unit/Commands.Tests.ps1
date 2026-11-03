@@ -205,3 +205,24 @@ Describe 'Read-RmConfirmation' {
         Should -Invoke Read-Host -ParameterFilter { $Prompt -eq '登録しますか？(y/n)' }
     }
 }
+
+Describe 'rmbulk.cmd' {
+    BeforeAll {
+        # ツール一式をコピーし、接続できない URL と API キーを保存しておく
+        $script:tool = Join-Path $TestDrive 'tool'
+        New-Item -ItemType Directory $tool | Out-Null
+        $repo = Join-Path $PSScriptRoot '..\..'
+        Copy-Item (Join-Path $repo 'rmbulk.cmd'), (Join-Path $repo 'rmbulk.ps1') $tool
+        Copy-Item (Join-Path $repo 'lib') $tool -Recurse
+        Save-RmConfig -Root $tool -BaseUrl 'http://127.0.0.1:9'
+        Save-RmApiKey -Root $tool -ApiKey (ConvertTo-SecureString 'k' -AsPlainText -Force)
+    }
+
+    # PowerShell 7 から実行すると、cmd.exe 経由で起動した 5.1 に 7 の PSModulePath が引き継がれる
+    It '保存した API キーを読み込める（PowerShell 7 から実行しても）' {
+        $output = & (Join-Path $tool 'rmbulk.cmd') refresh 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 1
+        $output | Should -Not -Match 'API キーを読み込めません'
+        $output | Should -Match 'Redmine に接続できません'
+    }
+}
