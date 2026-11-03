@@ -146,9 +146,11 @@ Describe 'Excel の読み込み' -Skip:$noExcel {
                         for ($c = 0; $c -lt $rows[$r].Count; $c++) {
                             $cell = $sheet.Cells.Item($r + 1, $c + 1)
                             $v = $rows[$r][$c]
-                            if ($v -is [string] -and $v.StartsWith('@')) { $cell.NumberFormat = '@'; $cell.Value2 = $v.Substring(1) }
-                            elseif ($v -is [datetime]) { $cell.Value2 = $v.ToOADate(); $cell.NumberFormat = 'yyyy/m/d' }
-                            elseif ($null -ne $v) { $cell.Value2 = $v }
+                            # $cell.Value2 = $v は最初に代入した型を覚えてしまい、別の型で失敗するので InvokeMember で代入する
+                            $setValue = { param($value) [void]$cell.GetType().InvokeMember('Value2', [Reflection.BindingFlags]::SetProperty, $null, $cell, @($value)) }
+                            if ($v -is [string] -and $v.StartsWith('@')) { $cell.NumberFormat = '@'; & $setValue $v.Substring(1) }
+                            elseif ($v -is [datetime]) { & $setValue $v.ToOADate(); $cell.NumberFormat = 'yyyy/m/d' }
+                            elseif ($null -ne $v) { & $setValue $v }
                         }
                     }
                 }

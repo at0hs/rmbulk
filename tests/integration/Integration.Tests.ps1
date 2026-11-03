@@ -104,7 +104,11 @@ Describe '本物の Redmine への登録' -Skip:$noDocker {
                 @(1, 'rmbulk-test', '機能', "Excel親-$runId", ([datetime]'2026-11-04').ToOADate(), ([datetime]'2026-11-05').ToOADate(), 'v1.0', ''),
                 @(2, 'rmbulk-test', '機能', "Excel子-$runId", ([datetime]'2026-11-04').ToOADate(), ([datetime]'2026-11-05').ToOADate(), 'v1.0', '#1'))
             for ($r = 0; $r -lt $values.Count; $r++) {
-                for ($c = 0; $c -lt $values[$r].Count; $c++) { $sheet.Cells.Item($r + 1, $c + 1).Value2 = $values[$r][$c] }
+                for ($c = 0; $c -lt $values[$r].Count; $c++) {
+                    # .Value2 = は最初に代入した型を覚えてしまい、別の型で失敗するので InvokeMember で代入する
+                    $cell = $sheet.Cells.Item($r + 1, $c + 1)
+                    [void]$cell.GetType().InvokeMember('Value2', [Reflection.BindingFlags]::SetProperty, $null, $cell, @($values[$r][$c]))
+                }
             }
             $book.SaveAs($xlsx, 51)
             $book.Close($false)
