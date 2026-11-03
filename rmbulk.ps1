@@ -4,18 +4,28 @@ param(
     [Parameter(Position = 1)][string]$Target
 )
 
+# リリースのたびに上げる（タグより古いとテストが失敗する）
+$script:RmVersion = '1.2.0'
+
 foreach ($lib in 'Redmine', 'Input', 'Import') {
     . (Join-Path $PSScriptRoot "lib\$lib.ps1")
 }
 
 function Show-RmUsage {
+    Write-Host "rmbulk $script:RmVersion"
     Write-Host @'
 使い方:
   rmbulk setup                  # 接続設定とメタデータの取得
   rmbulk refresh                # メタデータだけを取り直す
   rmbulk template [<出力先>]    # 列名だけが入った CSV のひな形を出力する
   rmbulk import <ファイル>      # CSV / Excel を読み込み、確認したうえで登録する
+  rmbulk version                # バージョンを表示する
 '@
+}
+
+function Invoke-RmVersion {
+    Write-Host "rmbulk $script:RmVersion"
+    $true
 }
 
 function Write-RmError {
@@ -133,6 +143,7 @@ function Invoke-RmImport {
     }
 
     $log = New-RmLog -Root $Root -InputPath $fullPath
+    Write-RmLog -Log $log -Message "rmbulk $script:RmVersion"
     $results = Invoke-RmRegistration -Items $check.Items -Log $log
     Write-RmLogSummary -Log $log -Results $results
     Show-RmFailures -Results $results
@@ -148,6 +159,7 @@ $ok = switch ($Command) {
     'setup' { Invoke-RmSetup -Root $PSScriptRoot }
     'refresh' { Invoke-RmRefresh -Root $PSScriptRoot }
     'template' { Invoke-RmTemplate -OutputPath $Target }
+    'version' { Invoke-RmVersion }
     'import' {
         if (-not $Target) { Show-RmUsage; $false }
         else { Invoke-RmImport -Root $PSScriptRoot -Path $Target }

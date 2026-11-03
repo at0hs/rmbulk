@@ -12,6 +12,7 @@ rmbulk.cmd setup                   :: 最初に1回。URL と API キーを入�
 rmbulk.cmd template [<出力先>]     :: 列名だけが入ったひな形 CSV を出力する（既定: rmbulk_template.csv）
 rmbulk.cmd import <ファイル>       :: CSV / Excel を読み込み、一覧を確認して y で登録する
 rmbulk.cmd refresh                 :: プロジェクト一覧などを取り直す（普段は不要）
+rmbulk.cmd version                 :: バージョンを表示する
 ```
 
 API キーは Redmine の「個人設定」画面の右側にある「API アクセスキー」で確認できます。

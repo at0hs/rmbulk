@@ -90,6 +90,31 @@ Describe 'template' {
     }
 }
 
+Describe 'バージョン' {
+    It 'バージョンは x.y.z の形' {
+        $RmVersion | Should -Match '^\d+\.\d+\.\d+$'
+    }
+
+    It 'version コマンドはバージョンを表示する' {
+        Mock Write-Host { }
+        Invoke-RmVersion | Should -BeTrue
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -eq "rmbulk $RmVersion" }
+    }
+
+    It '使い方の表示にもバージョンを出す' {
+        Mock Write-Host { }
+        Show-RmUsage
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -match "^rmbulk $([regex]::Escape($RmVersion))\b" }
+    }
+
+    It 'バージョンが最新のタグより古くない（タグを打つ前に上げ忘れていない）' {
+        $repo = Join-Path $PSScriptRoot '..\..'
+        $tag = git -C $repo describe --tags --abbrev=0 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $tag) { Set-ItResult -Skipped -Because 'タグが取得できない'; return }
+        [version]$RmVersion | Should -BeGreaterOrEqual ([version]($tag -replace '^v', ''))
+    }
+}
+
 Describe 'import' {
     BeforeEach {
         Mock Write-Host { }
@@ -128,6 +153,7 @@ Describe 'import' {
         $logs = @(Get-ChildItem (Get-RmPaths -Root $root).LogDir)
         $logs.Count | Should -Be 1
         [IO.File]::ReadAllText($logs[0].FullName) | Should -Match '成功 2件 / エラー 0件 / スキップ 0件'
+        [IO.File]::ReadAllText($logs[0].FullName) | Should -Match "rmbulk $([regex]::Escape($RmVersion))"
         Should -Invoke Write-Host -ParameterFilter { "$Object" -eq '成功 2件 / エラー 0件 / スキップ 0件' }
     }
 
